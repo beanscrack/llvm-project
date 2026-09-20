@@ -335,7 +335,7 @@ define void @load_store_vec_constants_CDS_float(ptr %ptr) {
 ; CHECK-LABEL: define void @load_store_vec_constants_CDS_float(
 ; CHECK-SAME: ptr [[PTR:%.*]]) {
 ; CHECK-NEXT:    [[PTR0:%.*]] = getelementptr float, ptr [[PTR]], i32 0
-; CHECK-NEXT:    store <8 x float> <float 1.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00>, ptr [[PTR0]], align 1, !sandboxvec [[META17:![0-9]+]]
+; CHECK-NEXT:    store <8 x i32> <i32 1065353216, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0>, ptr [[PTR0]], align 1, !sandboxvec [[META17:![0-9]+]]
 ; CHECK-NEXT:    ret void
 ;
   %ptr0 = getelementptr float, ptr %ptr, i32 0
@@ -369,7 +369,7 @@ define void @load_store_vec_constants_CFP_vector(ptr %ptr) {
 ; CHECK-LABEL: define void @load_store_vec_constants_CFP_vector(
 ; CHECK-SAME: ptr [[PTR:%.*]]) {
 ; CHECK-NEXT:    [[PTR0:%.*]] = getelementptr float, ptr [[PTR]], i32 0
-; CHECK-NEXT:    store <8 x float> <float 1.000000e+00, float 2.000000e+00, float 2.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00>, ptr [[PTR0]], align 1, !sandboxvec [[META19:![0-9]+]]
+; CHECK-NEXT:    store <8 x i32> <i32 1065353216, i32 1073741824, i32 1073741824, i32 1077936128, i32 1077936128, i32 1077936128, i32 1077936128, i32 1077936128>, ptr [[PTR0]], align 1, !sandboxvec [[META19:![0-9]+]]
 ; CHECK-NEXT:    ret void
 ;
   %ptr0 = getelementptr float, ptr %ptr, i32 0

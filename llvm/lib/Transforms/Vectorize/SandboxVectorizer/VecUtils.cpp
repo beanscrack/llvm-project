@@ -141,6 +141,22 @@ template LLVM_EXPORT_TEMPLATE void
     VecUtils::DeadInstructionMorgue::collectPotentiallyDeadInstrs<Instruction>(
         BndlRef<Instruction *>);
 
+Type *getCombinedVectorTypeFor(ArrayRef<Value *> Bndl, const DataLayout &DL) {
+  assert(!Bndl.empty() && "Expected non-empty Bndl!");
+  unsigned TotalBits = 0;
+  unsigned GCDBits = 0;
+  for (Value *V : Bndl) {
+    Type *ElmTy = VecUtils::getElementType(Utils::getExpectedType(V));
+    unsigned ElmBits = Utils::getNumBits(ElmTy, DL);
+    TotalBits += ElmBits * VecUtils::getNumLanes(V);
+    GCDBits = std::gcd(GCDBits, ElmBits);
+  }
+  // The bitwidth of the lane type is the GCD of the bitwidths of the elements,
+  // so that all elements can be uniformly split into integer lanes.
+  Type *VecElmTy = IntegerType::get(Bndl[0]->getContext(), GCDBits);
+  return FixedVectorType::get(VecElmTy, TotalBits / GCDBits);
+}
+
 void VecUtils::DeadInstructionMorgue::tryEraseDeadInstrs() {
   DenseMap<BasicBlock *, SmallVector<Instruction *>> SortedDeadInstrCandidates;
   // The dead instrs could span BBs, so we need to collect and sort them per BB.

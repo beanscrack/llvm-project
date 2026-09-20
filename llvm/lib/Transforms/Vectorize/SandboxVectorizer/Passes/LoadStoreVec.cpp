@@ -42,7 +42,7 @@ std::optional<Type *> LoadStoreVec::canVectorize(BndlRef<Instruction *> Bndl) {
   if (!Sched->trySchedule(Bndl))
     return std::nullopt;
 
-  return VecUtils::getCombinedVectorTypeFor(Bndl, *DL);
+  return getCombinedVectorTypeFor(SmallVector<Value *>(Bndl), *DL);
 }
 
 void LoadStoreVec::saveIR(Region &R) {
@@ -76,7 +76,7 @@ LoadInst *LoadStoreVec::createVectorLoad(BndlRef<Instruction *> Loads) {
   if (!canVectorize(Loads))
     return nullptr;
 
-  Type *Ty = VecUtils::getCombinedVectorTypeFor(Loads, *DL);
+  Type *Ty = getCombinedVectorTypeFor(SmallVector<Value *>(Loads), *DL);
   Value *LdPtr = cast<LoadInst>(Loads[0])->getPointerOperand();
   // TODO: Compute alignment.
   Align LdAlign(1);
@@ -86,7 +86,8 @@ LoadInst *LoadStoreVec::createVectorLoad(BndlRef<Instruction *> Loads) {
 
 Constant *LoadStoreVec::getEquivalentConstantWithType(Constant *C,
                                                       Type *DestTy) {
-  assert(!isNonIntegralPtrTy(DestTy) && "DestTy has no fixed size");
+  assert((!DestTy->isPointerTy() ||
+           !DL->isNonIntegralAddressSpace(DestTy->getPointerAddressSpace())) && "DestTy has no fixed size");
   Type *SrcTy = C->getType();
   if (SrcTy == DestTy)
     return C;
@@ -104,8 +105,8 @@ Constant *LoadStoreVec::getEquivalentConstantWithType(Constant *C,
 }
 
 Constant *LoadStoreVec::createConstantVector(BndlRef<Constant *> Constants) {
-  auto *VecTy =
-      cast<FixedVectorType>(VecUtils::getCombinedVectorTypeFor(Constants, *DL));
+  auto *VecTy = cast<FixedVectorType>(
+      getCombinedVectorTypeFor(SmallVector<Value *>(Constants), *DL));
   auto *LaneTy = VecTy->getScalarType();
   unsigned LaneBits = Utils::getNumBits(LaneTy, *DL);
   assert(all_of(Constants,
@@ -114,45 +115,53 @@ Constant *LoadStoreVec::createConstantVector(BndlRef<Constant *> Constants) {
                 }) &&
          "Chain contains a constant which cannot be converted/splitted");
 
-  SmallVector<std::pair<Constant *, unsigned>, 4> ConstantElements;
+  SmallVector<Constant *, 4> ConstantElements;
   for (Constant *COp : Constants) {
     if (auto *AggrCOp = dyn_cast<ConstantAggregate>(COp)) {
       // If the operand is a constant aggregate, then append all its elements.
       for (Value *Elm : AggrCOp->operands()) {
         auto *C = cast<Constant>(Elm);
-        unsigned Bits = Utils::getNumBits(C, *DL);
-        ConstantElements.push_back({C, Bits});
+        ConstantElements.push_back(C);
       }
     } else if (auto *SeqCOp = dyn_cast<ConstantDataSequential>(COp)) {
       for (auto ElmIdx : seq<unsigned>(SeqCOp->getNumElements())) {
         auto *C = SeqCOp->getElementAsConstant(ElmIdx);
-        unsigned Bits = Utils::getNumBits(C, *DL);
-        ConstantElements.push_back({C, Bits});
+        ConstantElements.push_back(C);
       }
     } else if (auto *Zero = dyn_cast<ConstantAggregateZero>(COp)) {
       auto *ZeroElm = Zero->getSequentialElement();
       for ([[maybe_unused]] auto Cnt :
            seq<unsigned>(Zero->getElementCount().getFixedValue()))
-        ConstantElements.push_back({ZeroElm, Utils::getNumBits(ZeroElm, *DL)});
+        ConstantElements.push_back(ZeroElm);
     } else if (isa<ConstantInt>(COp) && isa<VectorType>(COp->getType())) {
       auto *Elm = ConstantInt::get(*Ctx, cast<ConstantInt>(COp)->getValue());
       for ([[maybe_unused]] auto Cnt :
            seq<unsigned>(cast<VectorType>(COp->getType())
                              ->getElementCount()
                              .getFixedValue()))
-        ConstantElements.push_back({Elm, Utils::getNumBits(Elm, *DL)});
+        ConstantElements.push_back(Elm);
     } else if (isa<ConstantFP>(COp) && isa<VectorType>(COp->getType())) {
       auto *Elm = ConstantFP::get(cast<ConstantFP>(COp)->getValue(), *Ctx);
       for ([[maybe_unused]] auto Cnt :
            seq<unsigned>(cast<VectorType>(COp->getType())
                              ->getElementCount()
                              .getFixedValue()))
-        ConstantElements.push_back({Elm, Utils::getNumBits(Elm, *DL)});
+        ConstantElements.push_back(Elm);
+    } else if (auto *VecCOp = dyn_cast<UndefValue>(COp);
+               VecCOp && isa<VectorType>(COp->getType())) {
+      auto *VTy = cast<VectorType>(COp->getType());
+      Type *ElmTy = VTy->getElementType();
+      Constant *Elm = isa<PoisonValue>(VecCOp)
+                          ? static_cast<Constant *>(PoisonValue::get(ElmTy))
+                          : UndefValue::get(ElmTy);
+      for ([[maybe_unused]] auto Cnt :
+           seq<unsigned>(VTy->getElementCount().getFixedValue()))
+        ConstantElements.push_back(Elm);
     } else if (isa<VectorType>(COp->getType())) {
-      // TODO: Flatten the remaining vector constants, e.g. undef or poison.
+      // TODO: Flatten the remaining vector constants.
       return nullptr;
     } else {
-      ConstantElements.push_back({COp, Utils::getNumBits(COp, *DL)});
+      ConstantElements.push_back(COp);
     }
   }
 
@@ -161,22 +170,32 @@ Constant *LoadStoreVec::createConstantVector(BndlRef<Constant *> Constants) {
   // LaneTy-sized pieces in memory order: i16 0x0101 becomes i8 0x01, i8 0x01 on
   // little-endian. That needs a known bit pattern, so relocatable constants
   // such as the address of a global cannot be split.
-  if (any_of(ConstantElements, [&](const std::pair<Constant *, unsigned> &Elm) {
-        auto [C, Bits] = Elm;
-        return Bits > LaneBits &&
-               !isa<ConstantInt, ConstantFP, ConstantPointerNull>(C);
-      }))
-    return nullptr;
-
   SmallVector<Constant *, 8> ConstantLanes;
   ConstantLanes.reserve(ConstantElements.size());
-  for (auto [C, Bits] : ConstantElements) {
+  for (Constant *C : ConstantElements) {
+    unsigned Bits = Utils::getNumBits(C, *DL);
     if (Bits == LaneBits) {
       Constant *Lane = getEquivalentConstantWithType(C, LaneTy);
       if (Lane == nullptr)
         return nullptr;
       ConstantLanes.push_back(Lane);
     } else if (Bits > LaneBits) {
+      // Undef and poison have no bit pattern: every slice is undef/poison.
+      if (isa<UndefValue>(C)) {
+        Constant *Slice =
+            isa<PoisonValue>(C)
+                ? static_cast<Constant *>(PoisonValue::get(LaneTy))
+                : UndefValue::get(LaneTy);
+        ConstantLanes.append(Bits / LaneBits, Slice);
+        continue;
+      }
+      // Any other constant needs a known bit pattern. In particular a
+      // ConstantExpr (e.g., ptrtoint of a global) or a global's address is
+      // only known at link time and cannot be sliced.
+      // TODO: Handle nested aggregates, i.e., a ConstantAggregate element that
+      // is itself an aggregate, by flattening them recursively.
+      if (!isa<ConstantInt, ConstantFP, ConstantPointerNull>(C))
+        return nullptr;
       APInt Val;
       if (auto *CI = dyn_cast<ConstantInt>(C))
         Val = CI->getValue();

@@ -58,11 +58,6 @@ class LLVM_ABI LoadStoreVec final : public RegionPass {
   /// nullopt otherwise.
   std::optional<Type *> canVectorize(BndlRef<Instruction *> Bndl);
 
-  inline bool isNonIntegralPtrTy(Type *Ty) {
-    return Ty->isPointerTy() &&
-           DL->isNonIntegralAddressSpace(Ty->getPointerAddressSpace());
-  }
-
   /// Builds a single vector load out of \p Loads. \returns the new load,
   /// or nullptr if \p Loads are not a vectorizable.
   LoadInst *createVectorLoad(BndlRef<Instruction *> Loads);
