@@ -41,10 +41,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
-#include "clang/Driver/CreateInvocationFromArgs.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/CompilerInvocation.h"
-#include "clang/Frontend/FrontendActions.h"
+#include "clang/Driver/Driver.h"
 #include "clang/Frontend/FrontendOptions.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/HeaderSearchOptions.h"
@@ -66,6 +63,7 @@
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/DumpDataExtractor.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Core/ModuleList.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/UniqueCStringMap.h"
 #include "lldb/Expression/Expression.h"
@@ -651,8 +649,17 @@ protected:
 void TypeSystemClang::Initialize() {
   PluginManager::RegisterPlugin(
       GetPluginNameStatic(), "clang base AST context plug-in", CreateInstance,
+<<<<<<< HEAD
       GetSupportedLanguagesForTypes(), GetSupportedLanguagesForExpressions(),
       DebuggerInitialize);
+=======
+      GetSupportedLanguagesForTypes(), GetSupportedLanguagesForExpressions());
+
+  llvm::SmallString<128> path;
+  if (clang::driver::Driver::getDefaultModuleCachePath(path))
+    ModuleList::GetGlobalModuleListProperties().SetClangModulesCachePath(
+        FileSpec(path));
+>>>>>>> 528612d54794 ([lldb] Set the default clang module cache path in TypeSystemClang)
 }
 
 void TypeSystemClang::Terminate() {
